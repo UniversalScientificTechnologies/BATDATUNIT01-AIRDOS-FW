@@ -2,7 +2,7 @@
 
 
 // Read EEPROM structure from internal EEPROM
-bool readEEPROMRecord(uint8_t eeprom_addr, eeprom::EepromRecord &record)
+bool readEEPROMRecord(uint8_t eeprom_addr, DosimeterEeprom &record)
 {
   Wire.beginTransmission(eeprom_addr);
   Wire.write((uint8_t)0x00); // MSB - start from address 0
@@ -13,17 +13,17 @@ bool readEEPROMRecord(uint8_t eeprom_addr, eeprom::EepromRecord &record)
   uint8_t bytesRead = 0;
   
   // Read in chunks due to Wire buffer limitations
-  while (bytesRead < sizeof(eeprom::EepromRecord))
+  while (bytesRead < sizeof(DosimeterEeprom))
   {
-    uint8_t toRead = min(sizeof(eeprom::EepromRecord) - bytesRead, 16);
+    uint8_t toRead = min(sizeof(DosimeterEeprom) - bytesRead, 16);
     Wire.requestFrom(eeprom_addr, toRead);
     
-    while (Wire.available() && bytesRead < sizeof(eeprom::EepromRecord))
+    while (Wire.available() && bytesRead < sizeof(DosimeterEeprom))
     {
       ptr[bytesRead++] = Wire.read();
     }
     
-    if (bytesRead < sizeof(eeprom::EepromRecord))
+    if (bytesRead < sizeof(DosimeterEeprom))
     {
       // Set address for next chunk
       Wire.beginTransmission(eeprom_addr);
@@ -33,7 +33,7 @@ bool readEEPROMRecord(uint8_t eeprom_addr, eeprom::EepromRecord &record)
     }
   }
   
-  return (bytesRead == sizeof(eeprom::EepromRecord));
+  return (bytesRead == sizeof(DosimeterEeprom));
 }
 
 void readEepromSNToString(uint8_t eeprom_addr, String& dataString)

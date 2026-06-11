@@ -76,7 +76,7 @@ https://github.com/RobTillaart/MS5611
 #include <SHT31.h>
 #include <MS5611.h>
 #include <avr/wdt.h>
-#include "eeprom_layout.h"
+#include "../../xDOS-versions/generated/eeprom_layout.h"
 #include "githash.h"
 
 String FWversion = XSTR(MAJOR)"."XSTR(MINOR)"."XSTR(GHRELEASE)"-"XSTR(GHBUILD)"-"XSTR(GHBUILDTYPE);
@@ -848,11 +848,11 @@ void setup()
   Serial1.println(rtc_current_time_s);
 
   // Read sync_time and device name from internal EEPROM (digital cfg)
-  eeprom::EepromRecord eeprom_record = {};
+  DosimeterEeprom eeprom_record = {};
   if (readEEPROMRecord(EEPROM_DIGITAL_CFG_ADDR, eeprom_record))
   {
-    eeprom_sync_time = eeprom_record.sync_time;
-    eeprom_sync_rtc_seconds = eeprom_record.sync_rtc_seconds;
+    eeprom_sync_time = eeprom_record.rtc_history[0].reference_timestamp;
+    eeprom_sync_rtc_seconds = eeprom_record.rtc_history[0].rtc_value_at_reference_timestamp;
   }
   else
   {
@@ -862,7 +862,7 @@ void setup()
   }
 
   // Read device name from analog cfg EEPROM
-  eeprom::EepromRecord eeprom_adc_record = {};
+  DosimeterEeprom eeprom_adc_record = {};
   if (readEEPROMRecord(EEPROM_ANALOG_CFG_ADDR, eeprom_adc_record))
   {
 
@@ -888,9 +888,9 @@ void setup()
   // Digital module name from EEPROM digital cfg (up to 10 chars, may not be null-terminated).
   // Empty if EEPROM read failed (eeprom_record is zero-initialized).
   logHeader += "\r\n$DIG_NAME,";
-  for (uint8_t i = 0; i < sizeof(eeprom_record.device_id); i++)
+  for (uint8_t i = 0; i < sizeof(eeprom_record.device_identifier); i++)
   {
-    char c = eeprom_record.device_id[i];
+    char c = eeprom_record.device_identifier[i];
     if (c == '\0') break;
     logHeader += c;
   }
@@ -906,22 +906,22 @@ void setup()
   // Analog module name from EEPROM analog cfg (up to 10 chars, may not be null-terminated).
   // Empty if EEPROM read failed (eeprom_adc_record is zero-initialized).
   logHeader += "\r\n$ADC_NAME,";
-  for (uint8_t i = 0; i < sizeof(eeprom_adc_record.device_id); i++)
+  for (uint8_t i = 0; i < sizeof(eeprom_adc_record.device_identifier); i++)
   {
-    char c = eeprom_adc_record.device_id[i];
+    char c = eeprom_adc_record.device_identifier[i];
     if (c == '\0') break;
     logHeader += c;
   }
 
   // Calibration coefficients from analog board EEPROM
   logHeader += "\r\n$CALIB,";
-  logHeader += String(eeprom_adc_record.calib[0], 6);
+  logHeader += String(eeprom_adc_record.calibration_constants[0], 6);
   logHeader += ",";
-  logHeader += String(eeprom_adc_record.calib[1], 6);
+  logHeader += String(eeprom_adc_record.calibration_constants[1], 6);
   logHeader += ",";
-  logHeader += String(eeprom_adc_record.calib[2], 6);
+  logHeader += String(eeprom_adc_record.calibration_constants[2], 6);
   logHeader += ",";
-  logHeader += String(eeprom_adc_record.calib_ts);
+  logHeader += String(eeprom_adc_record.calibration_version);
 
   logHeader += "\r\n$BATP,";
   logHeader += batteryPresent ? "1" : "0";
