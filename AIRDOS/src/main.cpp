@@ -121,6 +121,7 @@ String FWversion = XSTR(MAJOR)"."XSTR(MINOR)"."XSTR(GHRELEASE)"-"XSTR(GHBUILD)"-
 #include "charger_impl.h"
 #include "eeprom_impl.h"
 #include "tone_led_impl.h"
+#include "i2c_switch_impl.h"
 
 String filename = "";
 uint16_t fn;
@@ -589,14 +590,15 @@ void analogBoardDisconectedLogic()
 {
     blinkLeds(true,true,true,80,5);
 
-    boolean SDreader = true;    // wanted SD reader mode
-    boolean USBchanged = true;  // USB device need to be changed
+    bool UsbModeSDreader = true;    // wanted SD reader mode
+    bool UsbModeChanged = true;  // USB device need to be changed
     uint32_t usbLedTickMs = 0;
-    bool usbSdLedState = false;
+    bool i2c_switch_to_usb = !i2c_switch_isBusMine();
 
     wdt_enable(WDTO_2S);  // watchdog for preventing I2C hanging
     
-    getChargerVBUSVoltage();
+    if(!i2c_switch_to_usb)
+      getChargerVBUSVoltage();
 
     wdt_reset();
     delay(1000); // Vaiting for stable voltage
@@ -606,84 +608,51 @@ void analogBoardDisconectedLogic()
     delay(1000); // Vaiting for stable voltage
     wdt_reset();
     while(true)
-    {
-      uint8_t vbus;
+    {      
       uint8_t switch_status;
-      bool i2c_switch_to_usb = false;
       bool usb_phy_connected = (digitalRead(ENUM_FTDI_USB) == LOW);
+      i2c_switch_to_usb = !i2c_switch_isBusMine();
 
       // USB mode LED indication:
       // USB-SD  -> slow blink on LED1
       // USB-I2C -> double blink on LED2+LED3
       uint32_t nowMs = millis();
-      if (SDreader)
+      if (UsbModeSDreader)
       {
-        if ((uint32_t)(nowMs - usbLedTickMs) >= 400)
-        {
-          usbLedTickMs = nowMs;
-          usbSdLedState = !usbSdLedState;
-        }
-        digitalWrite(LED1, usbSdLedState ? HIGH : LOW);
+        bool ledOn = (nowMs%800ul) >= 400ul;        
+        digitalWrite(LED1, ledOn ? HIGH : LOW);
         digitalWrite(LED2, LOW);
         digitalWrite(LED3, LOW);
       }
       else
       {
-        uint16_t phase = (uint16_t)(nowMs % 1000ul);
-        bool ledOn = (phase < 90) || ((phase >= 180) && (phase < 270));
+        uint16_t phase = (uint16_t)(nowMs % 800ul);
+        bool ledOn = (phase < 100) || ((phase >= 200) && (phase < 300));
         digitalWrite(LED1, LOW);
         digitalWrite(LED2, ledOn ? HIGH : LOW);
         digitalWrite(LED3, ledOn ? HIGH : LOW);
       }
 
-      // Check PCA9541A control register (0x01):
-      // bit0 = MYBUS (master0), bit1 = NMYBUS (master1 mirrored).
-      // Different values mean master0 does not own bus => USB CH-1 is active.
-      Wire.beginTransmission((uint8_t)0x70);
-      Wire.write((uint8_t)0x01);
-      Wire.endTransmission();
-      Wire.requestFrom((uint8_t)0x70, (uint8_t)1);
-      if (Wire.available())
-      {
-        switch_status = Wire.read();
-        uint8_t bit0 = (switch_status & (1 << 0)) ? 1 : 0;
-        uint8_t bit1 = (switch_status & (1 << 1)) ? 1 : 0;
-        i2c_switch_to_usb = (bit0 != bit1);
-      }
-      else
-      {
-        // On read failure, assume USB mode to avoid false power-off.
-        i2c_switch_to_usb = true;
-      }
       wdt_reset();
-
+      
+      // Never evaluate local power-off while USB cable is physically connected
+      // or while USB master owns I2C switch (USB-I2C mode).
+      if (!usb_phy_connected && !i2c_switch_to_usb)
       {
-        // Never evaluate local power-off while USB cable is physically connected
-        // or while USB master owns I2C switch (USB-I2C mode).
-        if (!usb_phy_connected && !i2c_switch_to_usb)
+        // Is VBUS (USB) present?
+        uint8_t vbus = getChargerVBUSVoltage();
+        if (vbus < 17) // < 4.5 V
         {
-          // Is VBUS (USB) present?
-          vbus = getChargerVBUSVoltage();
-        }
-        else
-        {
-          // USB CH-1 owns I2C bus, skip local VBUS decision.
-          vbus = 0xFF;
+          return; //No power on vbus - end.
         }
       }
+      
       wdt_reset();
 
-      if (vbus < 17) // < 4.5 V
+      if (UsbModeChanged)
       {
-        return; //No power on vbus - end.
-      }
-
-      wdt_reset();
-
-      if (USBchanged)
-      {
-        USBchanged = false;
-        if (SDreader)
+        UsbModeChanged = false;
+        if (UsbModeSDreader)
         {
           // USB-SD mode: keep external 3V3 I2C supply off.
           digitalWrite(EXT_I2C_EN, LOW);
@@ -718,8 +687,8 @@ void analogBoardDisconectedLogic()
 
       if (!digitalRead(BTN_USER_A))
       {
-        SDreader = !SDreader;
-        USBchanged = true;
+        UsbModeSDreader = !UsbModeSDreader;
+        UsbModeChanged = true;
       }
     }
 
@@ -740,6 +709,12 @@ void setup()
   Serial1.println("#Cvak...");
   Serial1.print("#Reset bits: (JTAG,Watchdog,Low Voltage, Reset Pin, Power On): ");
   Serial1.println(mcusr,BIN);
+
+  Serial1.print("#I2C: Own Bus:");
+  Serial1.println(i2c_switch_isBusMine(),BIN);
+
+  Serial1.print("#I2C Force Bus Owner:");
+  Serial1.println(i2c_switch_forceTakeBus(),BIN);
 
   pinMode(ACONNECT, INPUT);      // detection of analog frontend
   pinMode(ENUM_FTDI_USB, INPUT); // detection of USB
