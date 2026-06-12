@@ -159,6 +159,7 @@ void writeToSD(const String &dataString)
 {
   if (SDinserted)
   {
+    digitalWrite(LED3, HIGH);
     // make sure that the default chip select pin is set to output
     // see if the card is present and can be initialized:
     if (!SD.begin(SS))//, SPI_HALF_SPEED))
@@ -188,6 +189,7 @@ void writeToSD(const String &dataString)
     }
 
     digitalWrite(SS, HIGH);    // Disable SD card     
+    digitalWrite(LED3, LOW);
   }
 }
 
@@ -327,11 +329,9 @@ void EnvOut()
   dataString += String(MS5611.getTemperature(), 2);
   dataString += String(",");
   dataString += String(MS5611.getPressure(), 2);
-
-  pinMode(EXT_I2C_EN, OUTPUT);    // Disable external I2C
-  digitalWrite(EXT_I2C_EN, LOW);
-  pinMode(POWER3V3, OUTPUT);    // Analog power 3.3 V
-  digitalWrite(POWER3V3, LOW);  // off
+  
+  digitalWrite(EXT_I2C_EN, LOW);  // Disable external I2C
+  digitalWrite(POWER3V3, LOW);  // Analog power 3.3 V off
 
   wdt_disable();
 
@@ -495,6 +495,9 @@ void DataOut()
 
 void powerOffWithDischarge()
 {
+    i2c_switch_forceTakeBus(); 
+
+
     Wire.beginTransmission(RTC_ADDR); // 1024 Hz to #INTA
     Wire.write((uint8_t)0x27); // Start register
     Wire.write((uint8_t)0x00); // 0x27 Enable CLX output on INTA pin, using bits set in reg 0x28
@@ -517,6 +520,7 @@ void powerOffWithDischarge()
     Wire.write(0x95);             // COF
     Wire.endTransmission();
 
+    wdt_disable();
 
     // Power off
     Wire.beginTransmission(CHARGER_ADDR); // I2C address
@@ -531,6 +535,39 @@ void powerOffWithDischarge()
     }
 }
 
+void powerOffByButton()
+{
+  uint8_t led1=digitalRead(LED1);
+  uint8_t led2=digitalRead(LED2);
+  uint8_t led3=digitalRead(LED3); 
+
+  digitalWrite(LED1, HIGH);
+  digitalWrite(LED2, HIGH);
+  digitalWrite(LED3, HIGH);
+
+  uint32_t startMs = millis();
+  while(!digitalRead(BTN_USER_A))
+  {
+      uint32_t nowMs = millis();
+      if(nowMs%500==0)
+        wdt_reset();
+      if(nowMs-startMs>1000)      
+        digitalWrite(LED1, LOW);
+      
+      if(nowMs-startMs>2000)
+        digitalWrite(LED2, LOW);
+      if(nowMs-startMs>3000)
+      {
+        digitalWrite(LED3, LOW);
+        Serial1.println("#PowerOff by button");
+        powerOffWithDischarge();
+      }
+  }
+
+  digitalWrite(LED1, led1);
+  digitalWrite(LED2, led2);
+  digitalWrite(LED3, led3);
+}
 
 //file log rotation logic.
 //filename,fn <>
@@ -585,10 +622,13 @@ void updateUsedFile()
 //           - usb-hid
 // - nebo usb připojené není a pak se zařízení za chvilku vypne.
 // když jsme v modu usb-hid a obslužný program přebral správu I2C, tak nedovedeme číst napětí z CHARGERU
-// pokud obslužný sw nepřepne
-void analogBoardDisconectedLogic()
+// pokud obslužný sw nepřepne,lze vypnout jen restartem
+void usbServiceMode()
 {
-    blinkLeds(true,true,true,80,5);
+    blinkLeds(true,false,false,80,5);
+    digitalWrite(LED1, HIGH);
+    digitalWrite(LED2, LOW);
+    digitalWrite(LED3, LOW);
 
     bool UsbModeSDreader = true;    // wanted SD reader mode
     bool UsbModeChanged = true;  // USB device need to be changed
@@ -607,16 +647,20 @@ void analogBoardDisconectedLogic()
     wdt_reset();
     delay(1000); // Vaiting for stable voltage
     wdt_reset();
+
+    uint8_t cable_disconected=0;
     while(true)
     {      
       uint8_t switch_status;
       bool usb_phy_connected = (digitalRead(ENUM_FTDI_USB) == LOW);
       i2c_switch_to_usb = !i2c_switch_isBusMine();
+      digitalWrite(LED2, i2c_switch_to_usb); //red led when I2C is not mmine
+      
 
       // USB mode LED indication:
       // USB-SD  -> slow blink on LED1
       // USB-I2C -> double blink on LED2+LED3
-      uint32_t nowMs = millis();
+     /*uint32_t nowMs = millis();
       if (UsbModeSDreader)
       {
         bool ledOn = (nowMs%800ul) >= 400ul;        
@@ -631,7 +675,7 @@ void analogBoardDisconectedLogic()
         digitalWrite(LED1, LOW);
         digitalWrite(LED2, ledOn ? HIGH : LOW);
         digitalWrite(LED3, ledOn ? HIGH : LOW);
-      }
+      }*/
 
       wdt_reset();
       
@@ -641,9 +685,19 @@ void analogBoardDisconectedLogic()
       {
         // Is VBUS (USB) present?
         uint8_t vbus = getChargerVBUSVoltage();
+        Serial1.println(vbus);
         if (vbus < 17) // < 4.5 V
         {
-          return; //No power on vbus - end.
+          cable_disconected++;
+          if(cable_disconected >10)
+          {
+            Serial1.println("#PowerOff by usb disconected");
+            return; //No power on vbus - end.
+          }
+        }
+        else
+        {
+          cable_disconected=0;
         }
       }
       
@@ -652,15 +706,19 @@ void analogBoardDisconectedLogic()
       if (UsbModeChanged)
       {
         UsbModeChanged = false;
+        playUSBModeChangeTone();          // Signal mode change to user
+        
         if (UsbModeSDreader)
         {
+          digitalWrite(LED3, HIGH);
+
           // USB-SD mode: keep external 3V3 I2C supply off.
+        
           digitalWrite(EXT_I2C_EN, LOW);
 
           // SD card reader ON
           digitalWrite(SDmode, HIGH);   // SD card reader oscilator on
-          playUSBModeChangeTone();          // Signal mode change to user
-
+          
           // SD card reader on (charger stays as default enabled)
           Wire.beginTransmission(SD_READER_ADDR); // card reader address
           Wire.write((uint8_t)0x00); // Start register
@@ -669,11 +727,15 @@ void analogBoardDisconectedLogic()
         }
         else
         {
+          digitalWrite(LED3, LOW);
+
           // USB-I2C mode: enable external 3V3 I2C supply.
+          //digitalWrite(POWER3V3, HIGH);    // Analog power 3.3 V 
+          //digitalWrite(POWER5V, HIGH);     // Analog power 5 V
+          //on on boot
+
           digitalWrite(EXT_I2C_EN, HIGH);
 
-          digitalWrite(LED1, LOW);
-          playUSBModeChangeTone();          // Signal mode change to user
           // SD card reader off
           Wire.beginTransmission(SD_READER_ADDR); // card reader address
           Wire.write((uint8_t)0x00); // Start register
@@ -689,6 +751,7 @@ void analogBoardDisconectedLogic()
       {
         UsbModeSDreader = !UsbModeSDreader;
         UsbModeChanged = true;
+        powerOffByButton();
       }
     }
 
@@ -764,15 +827,9 @@ void setup()
   batteryPresent = detectBatteryPresence(detectedBatteryMv);
   configCharger(batteryPresent);
   
-  // Indicate battery status with LED1: ON if no battery, OFF if battery present
-  // pinMode(LED1, OUTPUT);
-  // digitalWrite(LED1, batteryPresent ? LOW : HIGH);
-
-
-  if (digitalRead(ACONNECT))  // Analog board disconnected - special logic, after end switch off
+  if (digitalRead(ACONNECT) || !digitalRead(BTN_USER_A) )  // Analog board disconnected, or button for usbServiceMode
   {
-    analogBoardDisconectedLogic();
-    digitalWrite(LED2, digitalRead(ACONNECT)); //useless ?
+    usbServiceMode();    
     powerOffWithDischarge();        
     while(true); // Waiting for reset
 
@@ -1035,6 +1092,7 @@ void loop()
         {
           playClickChangeTone();
           clicks = !clicks;
+          powerOffByButton();
         };
 
         PostIntegration();
