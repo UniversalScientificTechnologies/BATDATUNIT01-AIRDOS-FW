@@ -141,7 +141,6 @@ uint16_t detectedBatteryMv = 0;
 
 void(* resetFunc) (void) = 0; //declare reset function at address 0
 
-
 void enableSD()
 {
   digitalWrite(SDpower, HIGH);   // SD card power on
