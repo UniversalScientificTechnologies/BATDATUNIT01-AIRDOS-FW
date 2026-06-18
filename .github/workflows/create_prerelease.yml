@@ -18,19 +18,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
         with:
-          ref: AIRDOS04A
+          ref: main
 
       - name: Gen Release Name and preare assets
         id: gen_release_name
         run: |
-          MAJOR=`cat fw/AIRDOS04/nextversion|grep MAJOR|cut -d ' ' -f 2`
-          MINOR=`cat fw/AIRDOS04/nextversion|grep MINOR|cut -d ' ' -f 2`
-          NEXTRELEASE=`cat fw/AIRDOS04/nextversion|grep RELEASE|cut -d ' ' -f 2`
-          NEXTBUILD=`cat fw/AIRDOS04/nextversion|grep BUILD|cut -d ' ' -f 2`
+          MAJOR=`cat AIRDOS/nextversion|grep MAJOR|cut -d ' ' -f 2`
+          MINOR=`cat AIRDOS/nextversion|grep MINOR|cut -d ' ' -f 2`
+          NEXTRELEASE=`cat AIRDOS/nextversion|grep RELEASE|cut -d ' ' -f 2`
+          NEXTBUILD=`cat AIRDOS/nextversion|grep BUILD|cut -d ' ' -f 2`
           RELEASE=`echo $NEXTRELEASE"-1"|bc`
           BUILD=`echo $NEXTBUILD"-1"|bc`
 
-          echo "tagname=AIRDOS04-${MAJOR}.${MINOR}.${RELEASE}-BETA-${BUILD}"  >> $GITHUB_OUTPUT
+          echo "tagname=AIRDOS-${MAJOR}.${MINOR}.${RELEASE}-BETA-${BUILD}"  >> $GITHUB_OUTPUT
 
       - name: Create TAG
         run: |
@@ -58,7 +58,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           release_id: ${{ steps.create_release.outputs.id }}
-          assets_path: fw/build/*.hex
+          assets_path: build/*.hex
 
         
 
