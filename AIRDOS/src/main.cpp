@@ -115,7 +115,7 @@ String FWversion = XSTR(MAJOR)"."XSTR(MINOR)"."XSTR(GHRELEASE)"-"XSTR(GHBUILD)"-
 #define SHT31_ADDR_SECONDARY 0x45
 #define MS5611_ADDR 0x77
 #define VBAT_ADC_LSB_0P01_MV     199u      // 1.99 mV = 199 × 0.01 mV
-#define VBAT_PRESENT_THRESHOLD_MV 3000u    // např. 3.0 V jako hranice „baterie je přítomna“
+#define VBAT_PRESENT_THRESHOLD_MV 1500u    // 1.5 V jako hranice „baterie je přítomna“ - pod hranicí 2.2V což je limit vypnutí napájení chargeru
 
 #include "rtc_impl.h"
 #include "charger_impl.h"
