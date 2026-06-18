@@ -30,7 +30,7 @@ jobs:
           RELEASE=`echo $NEXTRELEASE"-1"|bc`
           BUILD=`echo $NEXTBUILD"-1"|bc`
 
-          echo "tagname=AIRDOS04-${MAJOR}.${MINOR}.${RELEASE}-${BUILD}"  >> $GITHUB_OUTPUT
+          echo "tagname=AIRDOS-${MAJOR}.${MINOR}.${RELEASE}-${BUILD}"  >> $GITHUB_OUTPUT
 
       - name: Create TAG
         run: |
