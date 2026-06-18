@@ -1,4 +1,4 @@
-name: Create AIRDOS04 Release
+name: Create AIRDOS FW Release
 
 on:
   workflow_dispatch:

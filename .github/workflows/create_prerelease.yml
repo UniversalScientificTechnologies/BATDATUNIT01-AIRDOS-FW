@@ -1,4 +1,4 @@
-name: Create AIRDOS04 Pre-Release (BETA)
+name: Create AIRDOS FW Pre-Release (BETA)
 
 on:
   workflow_dispatch:
