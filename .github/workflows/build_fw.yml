@@ -71,10 +71,11 @@ jobs:
               NEXTRELEASE=$(grep '^RELEASE ' "$NEXTVERSION_PATH" | awk '{print $2}')
               NEXTBUILD=$(grep '^BUILD ' "$NEXTVERSION_PATH" | awk '{print $2}')
             else
+              echo "next version file not found"
               PREVMAJOR=$(grep '^#define MAJOR' "AIRDOS/src/main.cpp" | head -n 1 | awk '{print $3}')
               PREVMINOR=$(grep '^#define MINOR' "AIRDOS/src/main.cpp" | head -n 1 | awk '{print $3}')
-              NEXTRELEASE=0
-              NEXTBUILD=0
+              NEXTRELEASE=1
+              NEXTBUILD=1
             fi
 
             CURMAJOR=$(grep '^#define MAJOR' "AIRDOS/src/main.cpp" | head -n 1 | awk '{print $3}')
@@ -84,7 +85,7 @@ jobs:
               echo "Same version"
             else
               echo "New version, set release to 0"
-              NEXTRELEASE=0
+              NEXTRELEASE=1
             fi
 
             echo "// This file is overwritten by github actions, do not update it manually" > githash.h
