@@ -1,0 +1,221 @@
+name: Build firmware
+
+on:
+  push:
+    paths:
+      - 'AIRDOS/**'
+      - '.github/workflows/*.yml'
+      - '!build/**'
+      - '!AIRDOS/**/githash.h'
+      - '!AIRDOS/**/nextversion'
+  pull_request:
+    paths:
+      - 'AIRDOS/**'
+      - '.github/workflows/*.yml'
+      - '!build/**'
+      - '!AIRDOS/**/githash.h'
+      - '!AIRDOS/**/nextversion'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      build_type:
+        required: false
+        type: string
+jobs:
+  load-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load matrix from file
+        id: set-matrix
+        run: |
+          MATRIX=$(python3 -c "import yaml, json; print(json.dumps({'include': yaml.safe_load(open('build_matrix.yaml'))}))")
+          echo "matrix=${MATRIX}" >> $GITHUB_OUTPUT
+
+  build:
+    runs-on: ubuntu-latest
+    needs: load-matrix
+    strategy:
+      matrix: ${{ fromJson(needs.load-matrix.outputs.matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          token: ${{ secrets.pat }}
+
+      - name: Update githash.h and compile
+        run: |
+          set -euo pipefail
+
+          BUILD_TYPE="${{ inputs.build_type }}"
+          BT="CIBuild"
+          if [ "$BUILD_TYPE" = "B" ]; then
+            BT="Beta"
+          fi
+          if [ "$BUILD_TYPE" = "R" ]; then
+            BT="Release"
+          fi
+
+          NEXTBUILD=0
+          if [ "${{ matrix.versioned }}" = "true" ]; then
+            NEXTVERSION_PATH="AIRDOS/nextversion"
+            if [ -f "$NEXTVERSION_PATH" ]; then
+              PREVMAJOR=$(grep '^MAJOR ' "$NEXTVERSION_PATH" | awk '{print $2}')
+              PREVMINOR=$(grep '^MINOR ' "$NEXTVERSION_PATH" | awk '{print $2}')
+              NEXTRELEASE=$(grep '^RELEASE ' "$NEXTVERSION_PATH" | awk '{print $2}')
+              NEXTBUILD=$(grep '^BUILD ' "$NEXTVERSION_PATH" | awk '{print $2}')
+            else
+              PREVMAJOR=$(grep '^#define MAJOR' "AIRDOS/src/main.cpp" | head -n 1 | awk '{print $3}')
+              PREVMINOR=$(grep '^#define MINOR' "AIRDOS/src/main.cpp" | head -n 1 | awk '{print $3}')
+              NEXTRELEASE=0
+              NEXTBUILD=0
+            fi
+
+            CURMAJOR=$(grep '^#define MAJOR' "AIRDOS/src/main.cpp" | head -n 1 | awk '{print $3}')
+            CURMINOR=$(grep '^#define MINOR' "AIRDOS/src/main.cpp" | head -n 1 | awk '{print $3}')
+
+            if [ "$CURMAJOR" = "$PREVMAJOR" ] && [ "$CURMINOR" = "$PREVMINOR" ]; then
+              echo "Same version"
+            else
+              echo "New version, set release to 0"
+              NEXTRELEASE=0
+            fi
+
+            echo "// This file is overwritten by github actions, do not update it manually" > githash.h
+            echo "String githash = \"${{ github.sha }},${BT}\";" >> githash.h
+            echo "#define GHRELEASE ${NEXTRELEASE}" >> githash.h
+            echo "#define GHBUILD ${NEXTBUILD}" >> githash.h
+            echo "#define GHBUILDTYPE ${BT}" >> githash.h
+
+            mv githash.h "AIRDOS/src/"
+          fi
+
+          python3 -m pip install --upgrade pip
+          python3 -m pip install platformio
+
+          PROJECT_DIR="AIRDOS"
+          BUILD_DIR="${GITHUB_WORKSPACE}/build"
+          PIO_BUILD_DIR="${PROJECT_DIR}/.pio/build/${{ matrix.env }}"
+
+          python3 -m platformio run -d "${PROJECT_DIR}" -e "${{ matrix.env }}"
+
+          rm -rf "${BUILD_DIR}"
+          mkdir -p "${BUILD_DIR}"
+          HEX_PATH="${PIO_BUILD_DIR}/firmware.hex"
+          cp "${HEX_PATH}" "${BUILD_DIR}/fw_${{ matrix.type }}_${{ matrix.name }}.hex"
+
+          if [ "${{ matrix.versioned }}" = "true" ]; then
+            NEXTBUILD=$(echo "$NEXTBUILD+1" | bc)
+
+            if [ "$BUILD_TYPE" = "R" ]; then
+              NEXTRELEASE=$(echo "$NEXTRELEASE+1" | bc)
+            fi
+            echo "#this file is maintained by github actions" > nextversion
+            echo "MAJOR ${CURMAJOR}" >> nextversion
+            echo "MINOR ${CURMINOR}" >> nextversion
+            echo "RELEASE ${NEXTRELEASE}" >> nextversion
+            echo "BUILD ${NEXTBUILD}" >> nextversion
+
+            echo "// This file is overwritten by github actions, do not update it manually" > githash.h
+            echo "String githash = \"${{ github.sha }},User\";" >> githash.h
+            echo "#define GHRELEASE ${NEXTRELEASE}" >> githash.h
+            echo "#define GHBUILD 0" >> githash.h
+            echo "#define GHBUILDTYPE User" >> githash.h
+
+            mv nextversion "AIRDOS/"
+            mv githash.h "AIRDOS/src/"
+          fi
+          touch root
+
+      - name: Store data
+        uses: actions/upload-artifact@v4
+        with:
+          name: fw_${{ matrix.type }}_${{ matrix.name }}
+          path: |
+            build/fw_${{ matrix.type }}_${{ matrix.name }}.hex
+            AIRDOS/nextversion
+            AIRDOS/src/githash.h
+            root
+          retention-days: 1
+
+  commit:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        #with:
+        #  token: ${{ secrets.pat }}
+
+      - run: |
+          rm -rf build || true
+          mkdir -p build
+          mkdir -p artifacts
+
+      - name: Download a Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: 'artifacts/'
+
+      - name: Update git hash
+        run: |
+          for d in `ls artifacts`;
+          do
+            cp -R artifacts/$d/* ./ ||true
+          done
+
+          rm -rf artifacts
+          rm -rf root
+
+          git status
+
+      - name: Get last commit message
+        id: last-commit-message
+        run: |
+          echo "msg=$(git log -1 --pretty=%s)" >> $GITHUB_OUTPUT
+
+      - name: Generate file pattern
+        id: file-pattern
+        run: |
+          # Build file pattern dynamically based on what exists
+          PATTERN="build/*"
+          PATTERN="$PATTERN AIRDOS/src/githash.h AIRDOS/nextversion"
+          echo "pattern=$PATTERN" >> $GITHUB_OUTPUT
+          echo "Generated pattern: $PATTERN"
+
+      - name: Configure git signing
+        id: git-singing
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SIGNING_KEY }}" > ~/.ssh/signing_key
+          chmod 600 ~/.ssh/signing_key
+
+          ssh-keygen -y -f ~/.ssh/signing_key > ~/.ssh/signing_key.pub
+
+          git config --global user.name "ustbot"
+          git config --global user.email "ust-bot@seznam.cz"
+
+          git config --global gpg.format ssh
+          git config --global user.signingkey ~/.ssh/signing_key.pub
+          git config --global commit.gpgsign true
+
+          
+
+      - name: Commit changes
+        id: commit-it
+        run: |
+          git add ${{ steps.file-pattern.outputs.pattern }}
+
+          git diff --cached --quiet && exit 0
+
+          git commit -m "${{ steps.last-commit-message.outputs.msg }}, extended build"
+          git remote -v
+          git push
+
