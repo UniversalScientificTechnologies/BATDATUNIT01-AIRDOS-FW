@@ -494,7 +494,12 @@ void DataOut()
 
 // Power off without discharging C21: power-off tone, then disable charger BATFET
 // (ship mode). Used for intentional power-off by button - skipping the C21 discharge
-// keeps the QON node high so the device stays off (see powerOffWithDischarge). Does not return.
+// keeps the QON node high so the device stays off (see powerOffWithDischarge).
+//
+// On battery power the MCU loses power inside this function and never returns. If external
+// (USB) power is present the charger ignores the shutdown and the MCU keeps running; in that
+// case this function waits a few seconds and then returns, so the caller can resume normal
+// operation instead of being left in an undefined state where it might corrupt data.
 void powerOff()
 {
     i2c_switch_forceTakeBus();
@@ -502,19 +507,23 @@ void powerOff()
     wdt_reset();
     playPowerOffTone();
 
-    wdt_disable();
-
-    // Power off
+    // Disable charger BATFET (ship mode) - removes power when running from battery.
     Wire.beginTransmission(CHARGER_ADDR); // I2C address
     Wire.write((uint8_t)0x18); // Start register
     Wire.write((uint8_t)0x0A); //
     Wire.endTransmission();
 
-    while(true)//should not happend
+    // Give the power path time to actually cut power. Keep the watchdog fed so we do not
+    // reset mid-shutdown. If we are still running after this, the shutdown was ignored
+    // (external power present) - return so the caller can resume normal operation.
+    for(uint8_t i=0; i<5; i++)
     {
-      delay(5000);
-      playErrorTone();
+      wdt_reset();
+      delay(1000);
     }
+
+    Serial1.println("#PowerOff ignored (external power present), resuming");
+    wdt_reset();
 }
 
 // Discharge C21 via 1024 Hz on the RTC INTA pin, then power off.
@@ -589,10 +598,11 @@ void powerOffByButton()
   if(armed)
   {
     Serial1.println("#PowerOff by button");
-    powerOff(); // does not return
+    powerOff(); // returns only if shutdown was ignored (external power present)
   }
 
-  // Released before the countdown finished - cancel and restore LED state.
+  // Reached if released before the countdown finished, or if powerOff() returned because
+  // external power kept the device on. Restore LED state and resume normal operation.
   digitalWrite(LED1, led1);
   digitalWrite(LED2, led2);
   digitalWrite(LED3, led3);
