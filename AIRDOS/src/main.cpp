@@ -558,24 +558,41 @@ void powerOffByButton()
   digitalWrite(LED3, HIGH);
 
   uint32_t startMs = millis();
+  bool armed = false;       // set once the 3 s countdown completes
   while(!digitalRead(BTN_USER_A))
   {
       uint32_t nowMs = millis();
       if(nowMs%500==0)
         wdt_reset();
-      if(nowMs-startMs>1000)      
+      if(nowMs-startMs>1000)
         digitalWrite(LED1, LOW);
-      
+
       if(nowMs-startMs>2000)
         digitalWrite(LED2, LOW);
       if(nowMs-startMs>3000)
       {
         digitalWrite(LED3, LOW);
-        Serial1.println("#PowerOff by button");
-        powerOff();
+        armed = true;
+      }
+      if(nowMs-startMs>15000) // button stuck/blocked: abort, do not power off
+      {
+        Serial1.println("#PowerOff aborted: button held too long");
+        digitalWrite(LED1, led1);
+        digitalWrite(LED2, led2);
+        digitalWrite(LED3, led3);
+        return;
       }
   }
 
+  // Button released. Power off only if the countdown completed - this requires a
+  // deliberate press-and-release, so a stuck/blocked button never powers the device off.
+  if(armed)
+  {
+    Serial1.println("#PowerOff by button");
+    powerOff(); // does not return
+  }
+
+  // Released before the countdown finished - cancel and restore LED state.
   digitalWrite(LED1, led1);
   digitalWrite(LED2, led2);
   digitalWrite(LED3, led3);
