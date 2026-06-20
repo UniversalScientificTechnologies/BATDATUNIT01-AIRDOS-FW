@@ -492,9 +492,45 @@ void DataOut()
 
 }
 
+// Power off without discharging C21: power-off tone, then disable charger BATFET
+// (ship mode). Used for intentional power-off by button - skipping the C21 discharge
+// keeps the QON node high so the device stays off (see powerOffWithDischarge).
+//
+// On battery power the MCU loses power inside this function and never returns. If external
+// (USB) power is present the charger ignores the shutdown and the MCU keeps running; in that
+// case this function waits a few seconds and then returns, so the caller can resume normal
+// operation instead of being left in an undefined state where it might corrupt data.
+void powerOff()
+{
+    i2c_switch_forceTakeBus();
+
+    wdt_reset();
+    playPowerOffTone();
+
+    // Disable charger BATFET (ship mode) - removes power when running from battery.
+    Wire.beginTransmission(CHARGER_ADDR); // I2C address
+    Wire.write((uint8_t)0x18); // Start register
+    Wire.write((uint8_t)0x0A); //
+    Wire.endTransmission();
+
+    // Give the power path time to actually cut power. Keep the watchdog fed so we do not
+    // reset mid-shutdown. If we are still running after this, the shutdown was ignored
+    // (external power present) - return so the caller can resume normal operation.
+    for(uint8_t i=0; i<5; i++)
+    {
+      wdt_reset();
+      delay(1000);
+    }
+
+    Serial1.println("#PowerOff ignored (external power present), resuming");
+    wdt_reset();
+}
+
+// Discharge C21 via 1024 Hz on the RTC INTA pin, then power off.
+// Needed only when the connector is disconnected (EXT_DETECTION floating).
 void powerOffWithDischarge()
 {
-    i2c_switch_forceTakeBus(); 
+    i2c_switch_forceTakeBus();
 
 
     Wire.beginTransmission(RTC_ADDR); // 1024 Hz to #INTA
@@ -506,12 +542,10 @@ void powerOffWithDischarge()
     wdt_reset();
     delay(1000); // Vaiting for capacitor discharge
     wdt_reset();
-    delay(1000); 
+    delay(1000);
     wdt_reset();
-    delay(1000); 
+    delay(1000);
     wdt_reset();
-
-    playPowerOffTone();
 
     Wire.beginTransmission(RTC_ADDR); // High-Z on #INTA
     Wire.write((uint8_t)0x27); // Start register
@@ -519,19 +553,7 @@ void powerOffWithDischarge()
     Wire.write(0x95);             // COF
     Wire.endTransmission();
 
-    wdt_disable();
-
-    // Power off
-    Wire.beginTransmission(CHARGER_ADDR); // I2C address
-    Wire.write((uint8_t)0x18); // Start register
-    Wire.write((uint8_t)0x0A); //
-    Wire.endTransmission();
-    
-    while(true)//should not happend
-    {
-      delay(5000);
-      playErrorTone();
-    }
+    powerOff();
 }
 
 void powerOffByButton()
@@ -545,24 +567,42 @@ void powerOffByButton()
   digitalWrite(LED3, HIGH);
 
   uint32_t startMs = millis();
+  bool armed = false;       // set once the 3 s countdown completes
   while(!digitalRead(BTN_USER_A))
   {
       uint32_t nowMs = millis();
       if(nowMs%500==0)
         wdt_reset();
-      if(nowMs-startMs>1000)      
+      if(nowMs-startMs>1000)
         digitalWrite(LED1, LOW);
-      
+
       if(nowMs-startMs>2000)
         digitalWrite(LED2, LOW);
       if(nowMs-startMs>3000)
       {
         digitalWrite(LED3, LOW);
-        Serial1.println("#PowerOff by button");
-        powerOffWithDischarge();
+        armed = true;
+      }
+      if(nowMs-startMs>15000) // button stuck/blocked: abort, do not power off
+      {
+        Serial1.println("#PowerOff aborted: button held too long");
+        digitalWrite(LED1, led1);
+        digitalWrite(LED2, led2);
+        digitalWrite(LED3, led3);
+        return;
       }
   }
 
+  // Button released. Power off only if the countdown completed - this requires a
+  // deliberate press-and-release, so a stuck/blocked button never powers the device off.
+  if(armed)
+  {
+    Serial1.println("#PowerOff by button");
+    powerOff(); // returns only if shutdown was ignored (external power present)
+  }
+
+  // Reached if released before the countdown finished, or if powerOff() returned because
+  // external power kept the device on. Restore LED state and resume normal operation.
   digitalWrite(LED1, led1);
   digitalWrite(LED2, led2);
   digitalWrite(LED3, led3);
