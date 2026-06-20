@@ -492,9 +492,36 @@ void DataOut()
 
 }
 
+// Power off without discharging C21: power-off tone, then disable charger BATFET
+// (ship mode). Used for intentional power-off by button - skipping the C21 discharge
+// keeps the QON node high so the device stays off (see powerOffWithDischarge). Does not return.
+void powerOff()
+{
+    i2c_switch_forceTakeBus();
+
+    wdt_reset();
+    playPowerOffTone();
+
+    wdt_disable();
+
+    // Power off
+    Wire.beginTransmission(CHARGER_ADDR); // I2C address
+    Wire.write((uint8_t)0x18); // Start register
+    Wire.write((uint8_t)0x0A); //
+    Wire.endTransmission();
+
+    while(true)//should not happend
+    {
+      delay(5000);
+      playErrorTone();
+    }
+}
+
+// Discharge C21 via 1024 Hz on the RTC INTA pin, then power off.
+// Needed only when the connector is disconnected (EXT_DETECTION floating).
 void powerOffWithDischarge()
 {
-    i2c_switch_forceTakeBus(); 
+    i2c_switch_forceTakeBus();
 
 
     Wire.beginTransmission(RTC_ADDR); // 1024 Hz to #INTA
@@ -506,12 +533,10 @@ void powerOffWithDischarge()
     wdt_reset();
     delay(1000); // Vaiting for capacitor discharge
     wdt_reset();
-    delay(1000); 
+    delay(1000);
     wdt_reset();
-    delay(1000); 
+    delay(1000);
     wdt_reset();
-
-    playPowerOffTone();
 
     Wire.beginTransmission(RTC_ADDR); // High-Z on #INTA
     Wire.write((uint8_t)0x27); // Start register
@@ -519,19 +544,7 @@ void powerOffWithDischarge()
     Wire.write(0x95);             // COF
     Wire.endTransmission();
 
-    wdt_disable();
-
-    // Power off
-    Wire.beginTransmission(CHARGER_ADDR); // I2C address
-    Wire.write((uint8_t)0x18); // Start register
-    Wire.write((uint8_t)0x0A); //
-    Wire.endTransmission();
-    
-    while(true)//should not happend
-    {
-      delay(5000);
-      playErrorTone();
-    }
+    powerOff();
 }
 
 void powerOffByButton()
@@ -559,7 +572,7 @@ void powerOffByButton()
       {
         digitalWrite(LED3, LOW);
         Serial1.println("#PowerOff by button");
-        powerOffWithDischarge();
+        powerOff();
       }
   }
 
